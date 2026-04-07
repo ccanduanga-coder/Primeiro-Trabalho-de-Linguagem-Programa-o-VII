@@ -1,0 +1,264 @@
+# Trabalho Pratico 1.5 - Sistema de Autenticacao com Decoradores e Hash de Senhas
+# Grupo número 20
+# 3º de Engenharia Informática
+
+import hashlib
+import os
+import functools
+from datetime import datetime
+
+
+usuario_actual = None
+usuarios = {}
+
+
+# funcoes de hash
+
+def gerar_salt():
+    # gera um salt aleatorio pra cada usuario
+    return os.urandom(16).hex()
+
+def hash_senha(senha, salt):
+    # mistura a senha com o salt e faz o hash SHA-256
+    return hashlib.sha256((senha + salt).encode()).hexdigest()
+
+def verificar_senha(senha, salt, hash_guardado):
+    return hash_senha(senha, salt) == hash_guardado
+
+
+# cadastro de usuarios
+
+def cadastrar_usuario(nome_usuario, senha, funcao="usuario"):
+    if nome_usuario in usuarios:
+        print(f"Esse usuario '{nome_usuario}' ja existe mano.")
+        return False
+
+    salt = gerar_salt()
+    h = hash_senha(senha, salt)
+    usuarios[nome_usuario] = {"hash": h, "salt": salt, "funcao": funcao}
+    print(f"Usuario '{nome_usuario}' cadastrado com sucesso (funcao: {funcao}).")
+    return True
+
+
+#decorador de autenticacao
+
+def autenticado(funcoes=None):
+
+    def decorador(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            global usuario_actual
+
+            if usuario_actual is None:
+                print("Acesso negado. Precisa fazer login primeiro.")
+                return
+
+            if funcoes is not None:
+                if usuario_actual["funcao"] not in funcoes:
+                    print(f"Sem permissao. Essa opcao e so pra: {funcoes}")
+                    return
+
+            return func(*args, **kwargs)
+        return wrapper
+    return decorador
+
+
+# funcoes protegidas
+
+@autenticado()
+def ver_dados_sensiveis():
+    print("\n--- Dados Sensiveis ---")
+    print(f"Usuario: {usuario_actual['nome_usuario']}")
+    print(f"Funcao: {usuario_actual['funcao']}")
+    print(f"Hora de acesso: {datetime.now().strftime('%H:%M:%S')}")
+    print("Dados confidenciais: ***")
+
+
+@autenticado(funcoes=["admin", "usuario"])
+def editar_perfil():
+    global usuario_actual
+
+    nome_actual = usuario_actual["nome_usuario"]
+
+    print(f"\n--- Editar Perfil ({nome_actual}) ---")
+    print("1 - Mudar nome de usuario")
+    print("2 - Mudar senha")
+    print("3 - Mudar os dois")
+    print("0 - Voltar")
+
+    opcao = input("Opcao: ").strip()
+
+    if opcao == "0":
+        print("Ok, voltando.")
+        return
+
+    if opcao not in ("1", "2", "3"):
+        print("Opcao invalida.")
+        return
+
+    novo_nome = nome_actual
+
+    # mudar nome de usuario
+    if opcao in ("1", "3"):
+        novo_nome = input("Novo nome de usuario: ").strip()
+
+        if not novo_nome:
+            print("O nome nao pode ficar vazio.")
+            return
+
+        if novo_nome != nome_actual and novo_nome in usuarios:
+            print("Esse nome ja ta sendo usado por outro usuario.")
+            return
+
+    # mudar senha
+    if opcao in ("2", "3"):
+        senha_actual = input("Senha actual: ").strip()
+        dados = usuarios[nome_actual]
+
+        if not verificar_senha(senha_actual, dados["salt"], dados["hash"]):
+            print("Senha actual errada, operacao cancelada.")
+            return
+
+        nova_senha = input("Nova senha: ").strip()
+        confirmar = input("Confirmar nova senha: ").strip()
+
+        if not nova_senha:
+            print("A nova senha nao pode ficar vazia.")
+            return
+
+        if nova_senha != confirmar:
+            print("As senhas nao batem, tenta de novo.")
+            return
+
+        # gerar novo salt e hash pra nova senha
+        novo_salt = gerar_salt()
+        usuarios[nome_actual]["salt"] = novo_salt
+        usuarios[nome_actual]["hash"] = hash_senha(nova_senha, novo_salt)
+        print("Senha actualizada.")
+
+    # se o nome mudou, tem que mover a entrada no dicionario
+    if novo_nome != nome_actual:
+        usuarios[novo_nome] = usuarios.pop(nome_actual)
+        usuario_actual["nome_usuario"] = novo_nome
+        print(f"Nome de usuario mudado pra '{novo_nome}'.")
+
+    print("Perfil actualizado com sucesso.")
+
+
+@autenticado(funcoes=["admin"])
+def apagar_usuario():
+    print("\n--- Apagar Usuario (so admin) ---")
+    alvo = input("Nome do usuario a apagar: ").strip()
+
+    if alvo == usuario_actual["nome_usuario"]:
+        print("Nao podes apagar a tua propria conta.")
+        return
+
+    if alvo in usuarios:
+        del usuarios[alvo]
+        print(f"Usuario '{alvo}' apagado.")
+    else:
+        print("Nao achei esse usuario nao.")
+
+
+@autenticado(funcoes=["admin"])
+def listar_usuarios():
+    print("\n--- Lista de Usuarios ---")
+    for u, dados in usuarios.items():
+        marcador = " <- tu" if u == usuario_actual["nome_usuario"] else ""
+        print(f"  {u} ({dados['funcao']}){marcador}")
+
+
+# ------ login e logout ------
+
+def login(nome_usuario, senha):
+    global usuario_actual
+
+    if nome_usuario not in usuarios:
+        print("Nao achei esse usuario.")
+        return False
+
+    dados = usuarios[nome_usuario]
+    if not verificar_senha(senha, dados["salt"], dados["hash"]):
+        print("Senha errada.")
+        return False
+
+    usuario_actual = {"nome_usuario": nome_usuario, "funcao": dados["funcao"]}
+    print(f"Login feito! Bem-vindo, {nome_usuario} ({dados['funcao']}).")
+    return True
+
+
+def logout():
+    global usuario_actual
+    if usuario_actual:
+        print(f"Ate logo, {usuario_actual['nome_usuario']}.")
+        usuario_actual = None
+    else:
+        print("Nao ta logado nenhum usuario.")
+
+
+# ------ menu principal
+
+def menu():
+
+
+    while True:
+        print("\n \n")
+        if usuario_actual:
+            print(f"  Logado: {usuario_actual['nome_usuario']} ({usuario_actual['funcao']})")
+        else:
+            print("  Nenhum usuario logado")
+        print("\n \n")
+        print("1 - Login")
+        print("2 - Logout")
+        print("3 - Ver dados sensiveis")
+        print("4 - Editar perfil")
+        print("5 - Apagar usuario  (so admin)")
+        print("6 - Listar usuarios (so admin)")
+        print("7 - Cadastrar novo usuario")
+        print("0 - Sair")
+
+        opcao = input("\n Escolha uma opcao: ").strip()
+
+        if opcao == "1":
+            if usuario_actual:
+                print("Ja estas logado. Faz logout primeiro.")
+            else:
+                u = input("Nome de usuario: ").strip()
+                p = input("Senha: ").strip()
+                login(u, p)
+
+        elif opcao == "2":
+            logout()
+
+        elif opcao == "3":
+            ver_dados_sensiveis()
+
+        elif opcao == "4":
+            editar_perfil()
+
+        elif opcao == "5":
+            apagar_usuario()
+
+        elif opcao == "6":
+            listar_usuarios()
+
+        elif opcao == "7":
+            u = input("Nome de usuario: ").strip()
+            p = input("Senha: ").strip()
+            f = input("Funcao (admin/usuario) [usuario]: ").strip() or "usuario"
+            if f not in ("admin", "usuario"):
+                print("Funcao invalida. Coloca admin ou usuario.")
+            else:
+                cadastrar_usuario(u, p, funcao=f)
+
+        elif opcao == "0":
+            print("A fechar o programa...")
+            break
+
+        else:
+            print("Essa opcao nao existe.")
+
+
+if __name__ == "__main__":
+    menu()
